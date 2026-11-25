@@ -1,0 +1,54 @@
+{
+  "name": "pi-cannbot",
+  "version": "0.1.0",
+  "description": "CANNBOT gateway provider for Pi: native /login with a VK, automatic token refresh, and a live model catalog.",
+  "type": "module",
+  "license": "MIT",
+  "author": "fengz72",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fengz72/pi-cannbot.git"
+  },
+  "homepage": "https://github.com/fengz72/pi-cannbot#readme",
+  "bugs": {
+    "url": "https://github.com/fengz72/pi-cannbot/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "cannbot",
+    "ascend",
+    "provider"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extension.ts"
+    ]
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "test:watch": "node --test --watch test/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^1.6.0",
+    "@earendil-works/pi-coding-agent": "^1.6.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.0.0"
+  }
+}
