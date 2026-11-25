@@ -1,6 +1,6 @@
 {
   "name": "pi-cannbot",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "CANNBOT gateway provider for Pi: native /login with a VK, automatic token refresh, and a live model catalog.",
   "type": "module",
   "license": "MIT",
