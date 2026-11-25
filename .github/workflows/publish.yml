@@ -17,6 +17,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
       - run: npm ci
       - name: Check tag matches package version
         run: |
@@ -28,10 +29,4 @@ jobs:
           fi
       - run: npm run typecheck
       - run: npm test
-      - name: Require an npm token
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: test -n "$NODE_AUTH_TOKEN" || (echo "NPM_TOKEN secret is not set" && exit 1)
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish --access public

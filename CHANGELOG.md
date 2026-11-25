@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.1.5]
+
+- Register through Pi's native provider API: `auth.oauth.toAuth` returns the
+  access token as the Bearer key and the Virtual Key as `x-api-vkey`, so both
+  headers the gateway requires come from a single Pi credential.
+- Route authentication, catalog, and inference through one undici `fetch` with a
+  lazily created `EnvHttpProxyAgent` that is given Node's `tls.rootCertificates`
+  merged with `NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE`. The global `fetch` is no
+  longer patched, and `HTTP(S)_PROXY` keeps working.
+- Persist the model catalog in Pi's `models-store.json` and drop the hardcoded
+  fallback list; a failed refresh keeps the models already cached.
+- Map thinking levels per model family: DeepSeek keeps `thinkingFormat`
+  (`off` sends `thinking: {type:"disabled"}`), Qwen sends
+  `reasoning_effort: "none"` for `off`, and GLM always thinks so only
+  `low`/`high`/`max` are offered and Pi clamps the rest.
+- Use `redirect: "error"` on the auth and catalog requests so credentials cannot
+  be carried to another origin.
+- Collapse `auth.ts`, `catalog.ts`, `constants.ts`, and `models.ts` into
+  `cannbot.ts`, and require Node >= 22.19.
+- Publish from CI with npm trusted publishing (OIDC) instead of an `NPM_TOKEN`
+  secret; provenance is generated automatically.
+
 ## [0.1.3]
 
 - Keep Pi's proxy dispatcher: the CANNBOT-only fetch wrapper now uses
