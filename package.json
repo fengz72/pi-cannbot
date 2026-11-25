@@ -34,7 +34,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=22.6"
+    "node": ">=22.19"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

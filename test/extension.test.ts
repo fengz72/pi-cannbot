@@ -1,91 +1,154 @@
 import assert from "node:assert/strict";
-import test, { type TestContext } from "node:test";
+import test from "node:test";
+import { createModels, InMemoryCredentialStore, InMemoryModelsStore, type Provider } from "@earendil-works/pi-ai";
 
-import register from "../src/extension.ts";
-import { FALLBACK_MODELS } from "../src/constants.ts";
-import { setRequestImpl } from "../src/http.ts";
+import { AUTH_URL, CATALOG_URL, GATEWAY_BASE_URL, PROVIDER_ID } from "../src/cannbot.ts";
+import register, { createCannbotProvider } from "../src/extension.ts";
 
-process.env.PI_CANNBOT_NO_FETCH_TRUST = "1";
-
-interface Registered {
-  id: string;
-  config: any;
+function mockFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>): typeof fetch {
+  return ((input: unknown, init?: RequestInit) => Promise.resolve(handler(String(input), init))) as typeof fetch;
 }
 
-async function registered(): Promise<Registered> {
-  const calls: Registered[] = [];
-  const pi = {
-    registerProvider: (id: string, config: unknown) => calls.push({ id, config }),
-  };
-  await register(pi as never);
-  const call = calls[0];
-  assert.ok(call !== undefined);
-  return call;
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
-function withoutTransport(t: TestContext): void {
-  t.after(() => setRequestImpl(undefined));
-}
+test("default export registers the native cannbot provider", () => {
+  let registered: Provider | undefined;
+  register({
+    registerProvider: (provider: Provider) => {
+      registered = provider;
+    },
+  } as never);
 
-test("registers the cannbot provider with OAuth and a fallback roster", async () => {
-  const { id, config } = await registered();
-  assert.equal(id, "cannbot");
-  assert.equal(config.name, "CANNBOT");
-  assert.equal(config.baseUrl, "https://cannbot.hicann.cn/gateway/compatible-mode/v1");
-  assert.equal(config.api, "openai-completions");
-  assert.equal(config.models.length, FALLBACK_MODELS.length);
-  assert.equal(config.oauth.name, "CANNBOT");
-  assert.equal(config.oauth.isSubscription, false);
-  for (const key of ["login", "refreshToken", "getApiKey", "modifyModels"]) {
-    assert.equal(typeof config.oauth[key], "function");
-  }
+  assert.ok(registered !== undefined);
+  assert.equal(registered.id, PROVIDER_ID);
+  assert.equal(registered.name, "CANNBOT");
+  assert.equal(registered.baseUrl, GATEWAY_BASE_URL);
+  assert.equal(registered.auth.oauth?.isSubscription, false);
+  assert.deepEqual(registered.getModels(), []);
 });
 
-test("modifyModels injects x-api-vkey from the stored credential", async () => {
-  const { config } = await registered();
-  const models = config.oauth.modifyModels(
-    [{ id: "m", headers: { existing: "1" }, marker: true }],
-    { refresh: "vk-1", access: "access", expires: 0 },
+test("provider integrates with Pi Models: secret login, dual auth headers, persist, and restore", async () => {
+  let catalogCalls = 0;
+  let failCatalog = false;
+
+  const fetchImpl = mockFetch((url) => {
+    if (url === AUTH_URL) {
+      return jsonResponse({ accessToken: "fresh-token", expiresIn: 3600 });
+    }
+    if (url === CATALOG_URL) {
+      catalogCalls++;
+      if (failCatalog) return new Response("error", { status: 500 });
+      return jsonResponse({
+        models: [{ model: "live-model", title: "Live Model", status: 1, contextLength: 8192, maxTokens: 4096 }],
+      });
+    }
+    return new Response("not found", { status: 404 });
+  });
+
+  const credentials = new InMemoryCredentialStore();
+  const modelsStore = new InMemoryModelsStore();
+  const models = createModels({ credentials, modelsStore });
+  models.setProvider(createCannbotProvider(fetchImpl));
+
+  // Login prompts with type: "secret" and stores the exchanged OAuth credential.
+  let promptType: string | undefined;
+  await models.login(PROVIDER_ID, "oauth", {
+    prompt: async (prompt) => {
+      promptType = prompt.type;
+      return "  vk-xyz \n";
+    },
+    notify() {},
+  });
+  assert.equal(promptType, "secret");
+
+  // toAuth injects both Bearer apiKey and x-api-vkey header.
+  const resolved = await models.getAuth(PROVIDER_ID);
+  assert.equal(resolved?.auth.apiKey, "fresh-token");
+  assert.deepEqual(resolved?.auth.headers, { "x-api-vkey": "vk-xyz" });
+
+  // Offline refresh must NOT hit the network.
+  await models.refresh({ allowNetwork: false });
+  assert.equal(catalogCalls, 0);
+  assert.deepEqual(models.getModels(PROVIDER_ID), []);
+
+  // Online refresh fetches the catalog once and persists it to modelsStore.
+  await models.refresh({ allowNetwork: true });
+  assert.equal(catalogCalls, 1);
+  assert.deepEqual(
+    models.getModels(PROVIDER_ID).map((m) => m.id),
+    ["live-model"],
   );
 
-  assert.equal(models[0].headers["x-api-vkey"], "vk-1");
-  assert.equal(models[0].headers.existing, "1");
-  assert.equal(models[0].marker, true);
+  // A fresh instance (e.g. cold restart / `pi -p`) restores persisted models offline without network calls.
+  const coldModels = createModels({ credentials, modelsStore });
+  coldModels.setProvider(createCannbotProvider(fetchImpl));
+  await coldModels.refresh({ allowNetwork: false });
+  assert.equal(catalogCalls, 1);
+  assert.deepEqual(
+    coldModels.getModels(PROVIDER_ID).map((m) => m.id),
+    ["live-model"],
+  );
+
+  // A subsequent catalog failure retains the previously persisted/live catalog.
+  failCatalog = true;
+  await coldModels.refresh({ allowNetwork: true });
+  assert.deepEqual(
+    coldModels.getModels(PROVIDER_ID).map((m) => m.id),
+    ["live-model"],
+  );
 });
 
-test("refreshModels adopts the live catalog for an OAuth credential", async (t) => {
-  withoutTransport(t);
-  setRequestImpl(async () => ({
-    status: 200,
-    text: JSON.stringify({ models: [{ model: "live-model", title: "Live Model", status: 1, contextLength: 8192 }] }),
-  }));
+test("streamSimple routes inference through the injected fetch with dual auth headers", async () => {
+  let capturedUrl: string | undefined;
+  let capturedHeaders: Headers | undefined;
 
-  const { config } = await registered();
-  const models = await config.refreshModels({
-    credential: { type: "oauth", access: "token", refresh: "vk", expires: 0 },
-    signal: new AbortController().signal,
+  const sse =
+    'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"deepseek-v4.1-flash","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}\n\n' +
+    'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"deepseek-v4.1-flash","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n' +
+    "data: [DONE]\n\n";
+
+  const models = createModels({ credentials: new InMemoryCredentialStore() });
+  models.setProvider(
+    createCannbotProvider(
+      mockFetch((url, init) => {
+        if (url === AUTH_URL) {
+          return jsonResponse({ accessToken: "access-123", expiresIn: 3600 });
+        }
+        if (url === CATALOG_URL) {
+          return jsonResponse({
+            models: [{ model: "deepseek-v4.1-flash", title: "DeepSeek-V4.1-Flash", status: 1 }],
+          });
+        }
+        capturedUrl = url;
+        capturedHeaders = new Headers(init?.headers);
+        return new Response(sse, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }),
+    ),
+  );
+
+  await models.login(PROVIDER_ID, "oauth", {
+    prompt: async () => "vk-secret",
+    notify() {},
+  });
+  await models.refresh({ allowNetwork: true });
+
+  const model = models.getModel(PROVIDER_ID, "deepseek-v4.1-flash");
+  assert.ok(model !== undefined);
+  const reply = await models.completeSimple(model, {
+    messages: [{ role: "user", content: "hello", timestamp: 0 }],
   });
 
-  assert.equal(models.length, 1);
-  assert.equal(models[0].id, "live-model");
-  assert.equal(models[0].contextWindow, 8192);
-});
-
-test("refreshModels keeps the fallback roster without a credential", async () => {
-  const { config } = await registered();
-  const models = await config.refreshModels({
-    signal: new AbortController().signal,
-  });
-  assert.equal(models.length, FALLBACK_MODELS.length);
-});
-
-test("refreshModels keeps the fallback roster when the catalog fails", async (t) => {
-  withoutTransport(t);
-  setRequestImpl(async () => ({ status: 500, text: "nope" }));
-  const { config } = await registered();
-  const models = await config.refreshModels({
-    credential: { type: "oauth", access: "token", refresh: "vk", expires: 0 },
-    signal: new AbortController().signal,
-  });
-  assert.equal(models.length, FALLBACK_MODELS.length);
+  assert.equal(capturedUrl, `${GATEWAY_BASE_URL}/chat/completions`);
+  assert.equal(capturedHeaders?.get("authorization"), "Bearer access-123");
+  assert.equal(capturedHeaders?.get("x-api-vkey"), "vk-secret");
+  assert.equal(reply.stopReason, "stop");
+  assert.deepEqual(reply.content, [{ type: "text", text: "hi" }]);
 });

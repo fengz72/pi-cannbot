@@ -1,50 +1,83 @@
-/**
- * Pi extension entry point.
- *
- * Registers the CANNBOT provider as a native Pi provider: `/login` collects a
- * Virtual Key, Pi stores the exchanged access token in `auth.json`, refreshes
- * it through the same exchange, and `refreshModels` keeps the account's model
- * roster current without a restart.
- */
+/** Pi extension registering CANNBOT as a native provider. */
 
+import { isModelType, type Provider } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { getApiKey, login, refreshToken } from "./auth.ts";
-import { fetchCatalog } from "./catalog.ts";
-import { GATEWAY_BASE_URL, PROVIDER_ID, PROVIDER_NAME } from "./constants.ts";
-import { installFetchTrust } from "./http.ts";
-import { fallbackModels, toModels } from "./models.ts";
+import {
+  authenticate,
+  buildModel,
+  fetchCatalog,
+  GATEWAY_BASE_URL,
+  PROVIDER_ID,
+  PROVIDER_NAME,
+  type CannbotModel,
+} from "./cannbot.ts";
+import { cannbotFetch } from "./http.ts";
 
-export default async function piCannbot(pi: ExtensionAPI): Promise<void> {
-  // Pi issues the actual model requests itself; give its fetch the same CA set.
-  await installFetchTrust();
+export function createCannbotProvider(fetchFn: typeof fetch = cannbotFetch): Provider {
+  const api = openAICompletionsApi();
+  let liveModels: readonly CannbotModel[] = [];
 
-  pi.registerProvider(PROVIDER_ID, {
+  return {
+    id: PROVIDER_ID,
     name: PROVIDER_NAME,
     baseUrl: GATEWAY_BASE_URL,
-    api: "openai-completions",
-    models: fallbackModels(),
+    auth: {
+      oauth: {
+        name: PROVIDER_NAME,
+        isSubscription: false,
+        login: async (interaction) => {
+          const raw = await interaction.prompt({
+            type: "secret",
+            message: "CANNBOT Virtual Key (vkey):",
+            placeholder: "vk-...",
+          });
+          return authenticate(raw, interaction.signal, fetchFn);
+        },
+        refresh: (credential, signal) => authenticate(credential.refresh, signal, fetchFn),
+        toAuth: async (credential) => ({
+          apiKey: credential.access,
+          headers: { "x-api-vkey": credential.refresh },
+        }),
+      },
+    },
+    getModels: () => liveModels,
     refreshModels: async (context) => {
-      const credential = context.credential;
-      if (credential?.type !== "oauth") return fallbackModels();
-      const catalog = await fetchCatalog(credential.access, context.signal);
-      return catalog === undefined ? fallbackModels() : toModels(catalog);
+      if (context.stored) {
+        const restored = context.stored.models
+          .filter(
+            (model): model is CannbotModel =>
+              isModelType(model, "chat") && model.provider === PROVIDER_ID && model.api === "openai-completions",
+          )
+          .map(buildModel);
+        if (
+          !(await context.publish({
+            update: () => {
+              liveModels = restored;
+            },
+          }))
+        ) {
+          return;
+        }
+      }
+      if (!context.allowNetwork || context.signal.aborted || context.credential?.type !== "oauth") return;
+      const models = await fetchCatalog(context.credential.access, context.signal, fetchFn);
+      if (!models || context.signal.aborted) return;
+      await context.publish({
+        persist: { models, checkedAt: Date.now() },
+        update: () => {
+          liveModels = models;
+        },
+      });
     },
-    oauth: {
-      name: PROVIDER_NAME,
-      // A CANNBOT login is an account, not a subscription.
-      isSubscription: false,
-      login,
-      refreshToken,
-      getApiKey,
-      // The VK travels in `x-api-vkey` while the access token travels as
-      // `Authorization: Bearer`. Both come from the same stored credential, so
-      // a refresh rotates them together.
-      modifyModels: (models, credentials) =>
-        models.map((model) => ({
-          ...model,
-          headers: { ...model.headers, "x-api-vkey": credentials.refresh },
-        })),
-    },
-  });
+    stream: (model, context, options) =>
+      api.stream(model, context, { ...options, fetch: options?.fetch ?? fetchFn }),
+    streamSimple: (model, context, options) =>
+      api.streamSimple(model, context, { ...options, fetch: options?.fetch ?? fetchFn }),
+  };
+}
+
+export default function piCannbot(pi: ExtensionAPI): void {
+  pi.registerProvider(createCannbotProvider());
 }

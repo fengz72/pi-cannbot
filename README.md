@@ -28,23 +28,29 @@ pi install ./pi-cannbot
 
 ## 实现要点
 
-- **接入方式**：一个 Pi provider extension（`pi.registerProvider`），复用 `openai-completions`，
+- **原生 Provider**：通过 `pi.registerProvider(provider)` 注册，复用 `openai-completions`，
   不实现自定义 wire。
 - **双凭据**：网关要求两个头同时存在——只给 VK 返回 `401 Access Token required.`，
-  只给 Bearer 返回 `401 Virtual Key is required.`。插件把 `access` 作为 Bearer、把 VK
-  作为 `x-api-vkey`，两者都来自同一份 Pi 凭据。
+  只给 Bearer 返回 `401 Virtual Key is required.`。插件通过 `auth.oauth.toAuth` 直接返回
+  `apiKey`（Bearer）与 `headers["x-api-vkey"]`（VK）。
+- **统一传输与 TLS**：网关下发交叉签名链（`DigiCert Global Root G2` 由 `DigiCert Global Root CA` 签发），
+  Node 默认 `fetch` 可能拒收。插件用 `undici` 的 `fetch` + 懒初始化 `EnvHttpProxyAgent`
+  （显式传入 `tls.rootCertificates` 并合并 `NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE`）统一处理认证、
+  目录与推理请求，不修改 `globalThis.fetch`，同时保留 `HTTP(S)_PROXY` 支持。
 - **模型目录**：网关的 `GET /gateway/.../v1/models` 不可用，因此从
-  `GET /cannbot/api/models/list` 拉取；按 `status` 过滤、按 id 去重，失败时保留内置兜底列表。
+  `GET /cannbot/api/models/list` 动态拉取并持久化到 Pi 的 `models-store.json`；
+  按 `status` 过滤、按 id 去重，不硬编码模型列表，刷新失败时保留已有缓存。
 - **图片**：仅对实测可读图的模型声明 `image`（`deepseek-v4.1-flash`、`qwen3.8-max`、
   `qwen3.8-flash`、`glm-5.3-flash`），其余保持纯文本。
-- **推理**：DeepSeek 模型使用 `thinkingFormat: "deepseek"`，并在回放 assistant 历史时保留
-  `reasoning_content`。`off` 会发送 `thinking: {type:"disabled"}`（网关接受）。
-- **依赖**：`undici` 只作为无法解析 Pi 自带 `undici` 时的兜底。
+- **思考强度**：
+  - DeepSeek：使用 `thinkingFormat: "deepseek"`（回放 assistant 历史保留 `reasoning_content`，`off` 发 `thinking: {type:"disabled"}`），支持 `off` / `low` / `medium` / `high` / `xhigh` / `max`。
+  - Qwen：`off` 发送 `reasoning_effort: "none"` 关闭思考，支持 `off` 至 `max` 全档位。
+  - GLM：始终思考，仅开放网关实测支持的 `low` / `high` / `max`（其余档位由 Pi 自动 clamp）。
 
 ## 安全
 
 - 插件只读取自身配置，不写日志中的凭据；请求只发往 CANNBOT 官方域名。
-- 认证与目录请求不跟随重定向，避免凭据被带到其他源。
+- 认证与目录请求使用 `redirect: "error"`，避免凭据被重定向到其他源。
 - 扩展以你的权限在 Pi 进程内运行，仅安装可信来源。
 
 ## 开发
@@ -55,7 +61,7 @@ npm run typecheck
 npm test
 ```
 
-测试用 Node 内置 test runner 直接运行 TypeScript（Node >= 22.6）。
+测试用 Node 内置 test runner 直接运行 TypeScript（Node >= 22.19）。
 
 ## 发布
 
@@ -68,28 +74,18 @@ git push --follow-tags
 
 ## 故障排查
 
-### `/login` 报 `Failed to login to CANNBOT: fetch failed` 或 `unable to get local issuer certificate`
+### 安装后 `/login` 里没有 CANNBOT
 
-这是 Node 的 TLS 信任链问题，不是插件逻辑问题：网关下发的是交叉签名链
-（`DigiCert Global Root G2` 由 `DigiCert Global Root CA` 签发），Node 的全局
-`fetch` 默认拒收。
+确认扩展已加载：`pi list` 应能看到本包；`pi -e /path/to/pi-cannbot` 只对单次运行生效。
 
-插件已内置修复：认证与目录请求走 `node:https` 并显式传入 Node 自带的
-`tls.rootCertificates`；模型推理请求由 AI SDK 发出，插件只在目标为
-`cannbot.hicann.cn` 时替换它的 dispatcher（保留 `HTTP(S)_PROXY`）。
-两者都不新增信任、不关闭校验，正常情况下**无需任何环境变量**；
-排查可设 `PI_CANNBOT_DEBUG=1`。
+### Pi 自身下载报 `unable to get local issuer certificate`
 
-Pi 自身的下载（如启动时安装 `fd` / `ripgrep`）仍使用 Pi 内置的 fetch，可能仍报同样
-错误。需要的话在启动 Pi 的 shell 里设置：
+插件内置的 TLS 配置仅作用于 CANNBOT 请求；Pi 自身下载工具（如 `fd` / `ripgrep`）仍走全局 `fetch`。
+如有需要，可在启动 Pi 的 shell 里设置：
 
 ```bash
 export NODE_EXTRA_CA_CERTS=/path/to/extra-ca.pem
 ```
-
-### 安装后 `/login` 里没有 CANNBOT
-
-确认扩展已加载：`pi list` 应能看到本包；`pi -e /path/to/pi-cannbot` 只对单次运行生效。
 
 ## License
 
