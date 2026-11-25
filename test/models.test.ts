@@ -33,6 +33,16 @@ test("DeepSeek models get the DeepSeek thinking format and reasoning replay", ()
   assert.equal(byId.get("qwen3.8-max")?.compat, undefined);
 });
 
+test("each model gets its own compat object", () => {
+  const deepseek = fallbackModels().filter((model) => model.id.startsWith("deepseek"));
+  assert.ok(deepseek.length > 1);
+  assert.notEqual(deepseek[0]?.compat, deepseek[1]?.compat);
+
+  const first = deepseek[0]!.compat as { thinkingFormat?: string };
+  first.thinkingFormat = "openai";
+  assert.equal((deepseek[1]!.compat as { thinkingFormat?: string }).thinkingFormat, "deepseek");
+});
+
 test("toModels carries catalog metadata", () => {
   const models = toModels([{ id: "custom", name: "Custom", contextWindow: 8192, maxTokens: 1024 }]);
   assert.equal(models.length, 1);

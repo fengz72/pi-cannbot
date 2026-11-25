@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.3]
+
+- Keep Pi's proxy dispatcher: the CANNBOT-only fetch wrapper now uses
+  `EnvHttpProxyAgent` and no longer replaces the global dispatcher, so proxied
+  traffic keeps working. The wrapper is installed even when extra CA
+  environment variables are set, because the AI SDK uses its own dispatcher.
+- Clamp the refresh margin to half the token lifetime so a short-lived token
+  cannot be stored already expired.
+- Cache the CA bundle per environment and cap response bodies at 1 MiB.
+- Accept `"1"`/numeric-string catalog fields, give each model its own compat
+  object, and mark the OAuth method as an account instead of a subscription.
+- Add opt-in `PI_CANNBOT_DEBUG=1` diagnostics for catalog and trust failures.
+- Run `npm ci` in CI, check that the release tag matches the package version,
+  and let Node expand the test glob on every platform.
+
 ## [0.1.2]
 
 - Also cover model inference. The AI SDK attaches its own undici dispatcher to

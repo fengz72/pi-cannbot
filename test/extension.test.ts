@@ -35,6 +35,7 @@ test("registers the cannbot provider with OAuth and a fallback roster", async ()
   assert.equal(config.api, "openai-completions");
   assert.equal(config.models.length, FALLBACK_MODELS.length);
   assert.equal(config.oauth.name, "CANNBOT");
+  assert.equal(config.oauth.isSubscription, false);
   for (const key of ["login", "refreshToken", "getApiKey", "modifyModels"]) {
     assert.equal(typeof config.oauth[key], "function");
   }

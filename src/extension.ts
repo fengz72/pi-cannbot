@@ -32,6 +32,8 @@ export default async function piCannbot(pi: ExtensionAPI): Promise<void> {
     },
     oauth: {
       name: PROVIDER_NAME,
+      // A CANNBOT login is an account, not a subscription.
+      isSubscription: false,
       login,
       refreshToken,
       getApiKey,

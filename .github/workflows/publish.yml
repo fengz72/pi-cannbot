@@ -17,7 +17,15 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - run: npm install
+      - run: npm ci
+      - name: Check tag matches package version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "tag v$tag does not match package.json $version"
+            exit 1
+          fi
       - run: npm run typecheck
       - run: npm test
       - name: Require an npm token

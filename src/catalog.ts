@@ -8,7 +8,7 @@
  */
 
 import { CATALOG_TIMEOUT_MS, CATALOG_URL, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from "./constants.ts";
-import { requestText } from "./http.ts";
+import { debugLog, requestText } from "./http.ts";
 
 export interface CatalogModel {
   id: string;
@@ -27,8 +27,9 @@ interface CatalogRow {
 }
 
 function positiveInteger(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
-  const floored = Math.floor(value);
+  const number = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  if (typeof number !== "number" || !Number.isFinite(number) || number <= 0) return undefined;
+  const floored = Math.floor(number);
   return Number.isSafeInteger(floored) && floored > 0 ? floored : undefined;
 }
 
@@ -54,8 +55,8 @@ export function normalizeRows(rows: readonly CatalogRow[]): CatalogModel[] {
   for (const row of rows) {
     const id = typeof row.model === "string" ? row.model.trim() : "";
     if (id === "" || seen.has(id)) continue;
-    // An omitted status means "active"; only an explicit non-1 is inactive.
-    if (row.status !== undefined && row.status !== 1) continue;
+    // An omitted status means "active"; only an explicit other value is inactive.
+    if (row.status !== undefined && row.status !== 1 && row.status !== "1") continue;
     seen.add(id);
     models.push({
       id,
@@ -80,16 +81,21 @@ export async function fetchCatalog(access: string, signal?: AbortSignal): Promis
       signal,
       timeoutMs: CATALOG_TIMEOUT_MS,
     });
-    if (response.status < 200 || response.status >= 300) return undefined;
+    if (response.status < 200 || response.status >= 300) {
+      debugLog(`catalog: HTTP ${response.status}`);
+      return undefined;
+    }
     let json: unknown;
     try {
       json = JSON.parse(response.text);
     } catch {
+      debugLog("catalog: response is not JSON");
       return undefined;
     }
     const models = normalizeRows(rowsOf(json));
     return models.length > 0 ? models : undefined;
-  } catch {
+  } catch (error) {
+    debugLog(`catalog: ${error instanceof Error ? error.message : "request failed"}`);
     return undefined;
   }
 }

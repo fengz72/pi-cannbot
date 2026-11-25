@@ -93,10 +93,13 @@ export async function authenticate(vk: string, signal?: AbortSignal): Promise<OA
       ? data.expiresIn
       : DEFAULT_EXPIRES_IN_SECONDS;
 
+  const lifetimeMs = expiresIn * 1000;
+  // A margin larger than the lifetime would keep the token permanently expired.
+  const margin = Math.min(EXPIRY_MARGIN_MS, Math.floor(lifetimeMs / 2));
   return {
     refresh: vk,
     access: data.accessToken,
-    expires: Date.now() + expiresIn * 1000 - EXPIRY_MARGIN_MS,
+    expires: Date.now() + lifetimeMs - margin,
   };
 }
 

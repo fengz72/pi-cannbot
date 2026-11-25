@@ -29,7 +29,7 @@ const DEEPSEEK_COMPAT = {
 } as CannbotCompat;
 
 function compatFor(id: string): CannbotCompat | undefined {
-  return id.startsWith("deepseek") ? DEEPSEEK_COMPAT : undefined;
+  return id.startsWith("deepseek") ? { ...DEEPSEEK_COMPAT } : undefined;
 }
 
 function build(id: string, name: string, contextWindow: number, maxTokens: number): CannbotModel {

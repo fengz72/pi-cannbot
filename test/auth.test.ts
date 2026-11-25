@@ -63,6 +63,15 @@ test("authenticate falls back to a one day lifetime without expiresIn", async (t
   assert.ok(credentials.expires > before + 23 * 3600 * 1000);
 });
 
+test("authenticate never returns an already-expired credential", async (t) => {
+  withoutTransport(t);
+  setRequestImpl(async () => jsonResponse({ accessToken: "t", expiresIn: 60 }));
+  const before = Date.now();
+  const credentials = await authenticate("vk-abc");
+  assert.ok(credentials.expires > before, `expires ${credentials.expires} <= ${before}`);
+  assert.ok(credentials.expires <= Date.now() + 60_000);
+});
+
 test("authenticate reports an HTTP failure", async (t) => {
   withoutTransport(t);
   setRequestImpl(async () => ({ status: 401, text: '{"message":"Access Token required."}' }));

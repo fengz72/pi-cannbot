@@ -34,16 +34,17 @@ pi install ./pi-cannbot
   只给 Bearer 返回 `401 Virtual Key is required.`。插件把 `access` 作为 Bearer、把 VK
   作为 `x-api-vkey`，两者都来自同一份 Pi 凭据。
 - **模型目录**：网关的 `GET /gateway/.../v1/models` 不可用，因此从
-  `GET /cannbot/api/models/list` 拉取；按 `status === 1` 过滤、按 id 去重，失败时保留内置兜底列表。
+  `GET /cannbot/api/models/list` 拉取；按 `status` 过滤、按 id 去重，失败时保留内置兜底列表。
 - **图片**：仅对实测可读图的模型声明 `image`（`deepseek-v4.1-flash`、`qwen3.8-max`、
   `qwen3.8-flash`、`glm-5.3-flash`），其余保持纯文本。
 - **推理**：DeepSeek 模型使用 `thinkingFormat: "deepseek"`，并在回放 assistant 历史时保留
   `reasoning_content`。`off` 会发送 `thinking: {type:"disabled"}`（网关接受）。
+- **依赖**：`undici` 只作为无法解析 Pi 自带 `undici` 时的兜底。
 
 ## 安全
 
 - 插件只读取自身配置，不写日志中的凭据；请求只发往 CANNBOT 官方域名。
-- 认证与目录请求都设置 `redirect: "error"`，避免凭据被重定向到其他源。
+- 认证与目录请求不跟随重定向，避免凭据被带到其他源。
 - 扩展以你的权限在 Pi 进程内运行，仅安装可信来源。
 
 ## 开发
@@ -75,8 +76,9 @@ git push --follow-tags
 
 插件已内置修复：认证与目录请求走 `node:https` 并显式传入 Node 自带的
 `tls.rootCertificates`；模型推理请求由 AI SDK 发出，插件只在目标为
-`cannbot.hicann.cn` 时把它的 undici dispatcher 换成带同样 CA 的 Agent。
-两者都不新增信任、不关闭校验，正常情况下**无需任何环境变量**。
+`cannbot.hicann.cn` 时替换它的 dispatcher（保留 `HTTP(S)_PROXY`）。
+两者都不新增信任、不关闭校验，正常情况下**无需任何环境变量**；
+排查可设 `PI_CANNBOT_DEBUG=1`。
 
 Pi 自身的下载（如启动时安装 `fd` / `ripgrep`）仍使用 Pi 内置的 fetch，可能仍报同样
 错误。需要的话在启动 Pi 的 shell 里设置：

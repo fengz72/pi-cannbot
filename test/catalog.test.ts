@@ -33,6 +33,20 @@ test("normalizeRows deduplicates, drops inactive rows, and fills defaults", () =
   assert.equal(models[1]?.maxTokens, DEFAULT_MAX_TOKENS);
 });
 
+test("normalizeRows tolerates a string status and numeric strings", () => {
+  const models = normalizeRows([
+    { model: "a", status: "1", contextLength: "4096", completionOptions: { maxTokens: "2048" } },
+    { model: "b", status: "0" },
+  ]);
+
+  assert.deepEqual(
+    models.map((model) => model.id),
+    ["a"],
+  );
+  assert.equal(models[0]?.contextWindow, 4096);
+  assert.equal(models[0]?.maxTokens, 2048);
+});
+
 test("fetchCatalog authenticates with the access token and returns rows", async (t) => {
   withoutTransport(t);
   let captured: HttpRequestOptions | undefined;
