@@ -3,6 +3,7 @@ import test, { type TestContext } from "node:test";
 
 import register from "../src/extension.ts";
 import { FALLBACK_MODELS } from "../src/constants.ts";
+import { setRequestImpl } from "../src/http.ts";
 
 interface Registered {
   id: string;
@@ -20,12 +21,8 @@ function registered(): Registered {
   return call;
 }
 
-function withFetch(t: TestContext, impl: typeof fetch): void {
-  const original = globalThis.fetch;
-  globalThis.fetch = impl;
-  t.after(() => {
-    globalThis.fetch = original;
-  });
+function withoutTransport(t: TestContext): void {
+  t.after(() => setRequestImpl(undefined));
 }
 
 test("registers the cannbot provider with OAuth and a fallback roster", () => {
@@ -54,14 +51,11 @@ test("modifyModels injects x-api-vkey from the stored credential", () => {
 });
 
 test("refreshModels adopts the live catalog for an OAuth credential", async (t) => {
-  withFetch(
-    t,
-    (async () =>
-      new Response(
-        JSON.stringify({ models: [{ model: "live-model", title: "Live Model", status: 1, contextLength: 8192 }] }),
-        { status: 200 },
-      )) as typeof fetch,
-  );
+  withoutTransport(t);
+  setRequestImpl(async () => ({
+    status: 200,
+    text: JSON.stringify({ models: [{ model: "live-model", title: "Live Model", status: 1, contextLength: 8192 }] }),
+  }));
 
   const { config } = registered();
   const models = await config.refreshModels({
@@ -83,7 +77,8 @@ test("refreshModels keeps the fallback roster without a credential", async () =>
 });
 
 test("refreshModels keeps the fallback roster when the catalog fails", async (t) => {
-  withFetch(t, (async () => new Response("nope", { status: 500 })) as typeof fetch);
+  withoutTransport(t);
+  setRequestImpl(async () => ({ status: 500, text: "nope" }));
   const { config } = registered();
   const models = await config.refreshModels({
     credential: { type: "oauth", access: "token", refresh: "vk", expires: 0 },

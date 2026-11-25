@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1]
+
+- Send the auth and catalog requests over `node:https` with Node's bundled CA
+  roots supplied explicitly. Node's `fetch` rejects the gateway's cross-signed
+  chain on some platforms; this makes `/login` and model discovery work without
+  setting `NODE_EXTRA_CA_CERTS`. Extra CAs from `NODE_EXTRA_CA_CERTS` and
+  `SSL_CERT_FILE` are merged in, and certificate verification stays enabled.
+
 ## [0.1.0]
 
 - Initial release.

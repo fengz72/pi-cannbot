@@ -9,20 +9,14 @@ import {
   primaryMac,
   refreshToken,
 } from "../src/auth.ts";
+import { setRequestImpl, type HttpRequestOptions } from "../src/http.ts";
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+function withoutTransport(t: TestContext): void {
+  t.after(() => setRequestImpl(undefined));
 }
 
-function withFetch(t: TestContext, impl: typeof fetch): void {
-  const original = globalThis.fetch;
-  globalThis.fetch = impl;
-  t.after(() => {
-    globalThis.fetch = original;
-  });
+function jsonResponse(body: unknown, status = 200): { status: number; text: string } {
+  return { status, text: JSON.stringify(body) };
 }
 
 test("normalizeVk trims and rejects unusable values", () => {
@@ -36,21 +30,22 @@ test("primaryMac returns a MAC-shaped string", () => {
 });
 
 test("authenticate exchanges the VK and returns millisecond expiry", async (t) => {
-  let captured: { url: string; init: RequestInit } | undefined;
-  withFetch(t, (async (input: string | URL | Request, init?: RequestInit) => {
-    captured = { url: String(input), init: init ?? {} };
+  withoutTransport(t);
+  let captured: HttpRequestOptions | undefined;
+  setRequestImpl(async (options) => {
+    captured = options;
     return jsonResponse({ accessToken: "access-token", expiresIn: 3600 });
-  }) as typeof fetch);
+  });
 
   const before = Date.now();
   const credentials = await authenticate("vk-abc");
 
-  assert.equal(captured?.init.method, "POST");
+  assert.equal(captured?.method, "POST");
   assert.equal(captured?.url, "https://cannbot.hicann.cn/cannbot/api/auth/authenticate");
-  const headers = new Headers(captured?.init.headers);
-  assert.equal(headers.get("x-api-vkey"), "vk-abc");
-  assert.equal(headers.get("content-type"), "application/json");
-  assert.deepEqual(JSON.parse(String(captured?.init.body)), { type: "cli", mac: primaryMac() });
+  assert.equal(captured?.headers["x-api-vkey"], "vk-abc");
+  assert.equal(captured?.headers["content-type"], "application/json");
+  assert.deepEqual(JSON.parse(String(captured?.body)), { type: "cli", mac: primaryMac() });
+  assert.equal(captured?.timeoutMs, 8_000);
 
   assert.equal(credentials.refresh, "vk-abc");
   assert.equal(credentials.access, "access-token");
@@ -61,28 +56,38 @@ test("authenticate exchanges the VK and returns millisecond expiry", async (t) =
 });
 
 test("authenticate falls back to a one day lifetime without expiresIn", async (t) => {
-  withFetch(t, (async () => jsonResponse({ accessToken: "t" })) as typeof fetch);
+  withoutTransport(t);
+  setRequestImpl(async () => jsonResponse({ accessToken: "t" }));
   const before = Date.now();
   const credentials = await authenticate("vk-abc");
   assert.ok(credentials.expires > before + 23 * 3600 * 1000);
 });
 
 test("authenticate reports an HTTP failure", async (t) => {
-  withFetch(t, (async () => new Response('{"message":"Access Token required."}', { status: 401 })) as typeof fetch);
+  withoutTransport(t);
+  setRequestImpl(async () => ({ status: 401, text: '{"message":"Access Token required."}' }));
   await assert.rejects(() => authenticate("vk-abc"), /HTTP 401/);
 });
 
 test("authenticate rejects a response without an access token", async (t) => {
-  withFetch(t, (async () => jsonResponse({ expiresIn: 60 })) as typeof fetch);
+  withoutTransport(t);
+  setRequestImpl(async () => jsonResponse({ expiresIn: 60 }));
   await assert.rejects(() => authenticate("vk-abc"), /no accessToken/);
 });
 
+test("authenticate rejects a non-JSON response", async (t) => {
+  withoutTransport(t);
+  setRequestImpl(async () => ({ status: 200, text: "<html>proxy</html>" }));
+  await assert.rejects(() => authenticate("vk-abc"), /not JSON/);
+});
+
 test("login prompts for the VK and normalizes it", async (t) => {
-  let header: string | null = null;
-  withFetch(t, (async (_input: string | URL | Request, init?: RequestInit) => {
-    header = new Headers(init?.headers).get("x-api-vkey");
+  withoutTransport(t);
+  let header: string | undefined;
+  setRequestImpl(async (options) => {
+    header = options.headers["x-api-vkey"];
     return jsonResponse({ accessToken: "t", expiresIn: 60 });
-  }) as typeof fetch);
+  });
 
   const credentials = await login({
     onAuth() {},
@@ -99,11 +104,12 @@ test("login prompts for the VK and normalizes it", async (t) => {
 });
 
 test("refreshToken reuses the stored refresh value as the VK", async (t) => {
-  let header: string | null = null;
-  withFetch(t, (async (_input: string | URL | Request, init?: RequestInit) => {
-    header = new Headers(init?.headers).get("x-api-vkey");
+  withoutTransport(t);
+  let header: string | undefined;
+  setRequestImpl(async (options) => {
+    header = options.headers["x-api-vkey"];
     return jsonResponse({ accessToken: "fresh", expiresIn: 60 });
-  }) as typeof fetch);
+  });
 
   const credentials = await refreshToken(
     { refresh: "vk-stored", access: "stale", expires: 0 },

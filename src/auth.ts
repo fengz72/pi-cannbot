@@ -13,11 +13,8 @@
 import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai/compat";
 import { networkInterfaces } from "node:os";
 
-import {
-  AUTH_TIMEOUT_MS,
-  AUTH_URL,
-  EXPIRY_MARGIN_MS,
-} from "./constants.ts";
+import { AUTH_TIMEOUT_MS, AUTH_URL, EXPIRY_MARGIN_MS } from "./constants.ts";
+import { requestText } from "./http.ts";
 
 /** Fallback lifetime when the server omits or corrupts `expiresIn`. */
 const DEFAULT_EXPIRES_IN_SECONDS = 86_400;
@@ -52,18 +49,9 @@ export function normalizeVk(raw: string): string {
   return vk;
 }
 
-function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
-  const timeout = AbortSignal.timeout(ms);
-  return signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
-}
-
-async function errorText(response: Response): Promise<string> {
-  try {
-    const text = (await response.text()).trim();
-    return text === "" ? "" : ` ${text.slice(0, 200)}`;
-  } catch {
-    return "";
-  }
+function snippet(text: string): string {
+  const trimmed = text.trim();
+  return trimmed === "" ? "" : ` ${trimmed.slice(0, 200)}`;
 }
 
 /**
@@ -73,23 +61,29 @@ async function errorText(response: Response): Promise<string> {
  * the server's `expiresIn` is in seconds.
  */
 export async function authenticate(vk: string, signal?: AbortSignal): Promise<OAuthCredentials> {
-  const response = await fetch(AUTH_URL, {
+  const response = await requestText({
     method: "POST",
+    url: AUTH_URL,
     headers: {
-      "Content-Type": "application/json",
+      "content-type": "application/json",
       "x-api-vkey": vk,
     },
     body: JSON.stringify({ type: "cli", mac: primaryMac() }),
-    // The request carries a credential: never let a redirect forward it.
-    redirect: "error",
-    signal: withTimeout(signal, AUTH_TIMEOUT_MS),
+    signal,
+    timeoutMs: AUTH_TIMEOUT_MS,
   });
 
-  if (!response.ok) {
-    throw new Error(`CANNBOT authentication failed: HTTP ${response.status}${await errorText(response)}`);
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`CANNBOT authentication failed: HTTP ${response.status}${snippet(response.text)}`);
   }
 
-  const data = (await response.json()) as { accessToken?: unknown; expiresIn?: unknown };
+  let data: { accessToken?: unknown; expiresIn?: unknown };
+  try {
+    data = JSON.parse(response.text) as { accessToken?: unknown; expiresIn?: unknown };
+  } catch {
+    throw new Error("CANNBOT authentication failed: response is not JSON");
+  }
+
   if (typeof data.accessToken !== "string" || data.accessToken === "") {
     throw new Error("CANNBOT authentication failed: response has no accessToken");
   }

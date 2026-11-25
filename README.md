@@ -65,6 +65,29 @@ npm version patch
 git push --follow-tags
 ```
 
+## 故障排查
+
+### `/login` 报 `Failed to login to CANNBOT: fetch failed` 或 `unable to get local issuer certificate`
+
+这是 Node 的 TLS 信任链问题，不是插件逻辑问题：网关下发的是交叉签名链
+（`DigiCert Global Root G2` 由 `DigiCert Global Root CA` 签发），Node 的全局
+`fetch` 默认拒收。
+
+插件已内置修复：认证与目录请求走 `node:https`，并显式传入 Node 自带的
+`tls.rootCertificates`（不新增信任、不关闭校验），同时合并 `NODE_EXTRA_CA_CERTS`
+与 `SSL_CERT_FILE` 中的证书。正常情况下**无需任何环境变量**。
+
+Pi 自身的下载（如启动时安装 `fd` / `ripgrep`）仍使用 Pi 内置的 fetch，可能仍报同样
+错误。需要的话在启动 Pi 的 shell 里设置：
+
+```bash
+export NODE_EXTRA_CA_CERTS=/path/to/extra-ca.pem
+```
+
+### 安装后 `/login` 里没有 CANNBOT
+
+确认扩展已加载：`pi list` 应能看到本包；`pi -e /path/to/pi-cannbot` 只对单次运行生效。
+
 ## License
 
 MIT

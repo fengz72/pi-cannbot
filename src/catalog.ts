@@ -8,6 +8,7 @@
  */
 
 import { CATALOG_TIMEOUT_MS, CATALOG_URL, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from "./constants.ts";
+import { requestText } from "./http.ts";
 
 export interface CatalogModel {
   id: string;
@@ -71,17 +72,22 @@ export function normalizeRows(rows: readonly CatalogRow[]): CatalogModel[] {
  * keep serving the previous or fallback catalog instead of an empty one.
  */
 export async function fetchCatalog(access: string, signal?: AbortSignal): Promise<CatalogModel[] | undefined> {
-  const timeout = AbortSignal.timeout(CATALOG_TIMEOUT_MS);
-  const combined = signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
   try {
-    const response = await fetch(CATALOG_URL, {
-      headers: { Authorization: `Bearer ${access}` },
-      signal: combined,
-      // The request carries the access token: never follow a redirect.
-      redirect: "error",
+    const response = await requestText({
+      method: "GET",
+      url: CATALOG_URL,
+      headers: { authorization: `Bearer ${access}` },
+      signal,
+      timeoutMs: CATALOG_TIMEOUT_MS,
     });
-    if (!response.ok) return undefined;
-    const models = normalizeRows(rowsOf(await response.json()));
+    if (response.status < 200 || response.status >= 300) return undefined;
+    let json: unknown;
+    try {
+      json = JSON.parse(response.text);
+    } catch {
+      return undefined;
+    }
+    const models = normalizeRows(rowsOf(json));
     return models.length > 0 ? models : undefined;
   } catch {
     return undefined;

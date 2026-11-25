@@ -3,20 +3,14 @@ import test, { type TestContext } from "node:test";
 
 import { fetchCatalog, normalizeRows } from "../src/catalog.ts";
 import { CATALOG_URL, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from "../src/constants.ts";
+import { setRequestImpl, type HttpRequestOptions } from "../src/http.ts";
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+function withoutTransport(t: TestContext): void {
+  t.after(() => setRequestImpl(undefined));
 }
 
-function withFetch(t: TestContext, impl: typeof fetch): void {
-  const original = globalThis.fetch;
-  globalThis.fetch = impl;
-  t.after(() => {
-    globalThis.fetch = original;
-  });
+function jsonResponse(body: unknown, status = 200): { status: number; text: string } {
+  return { status, text: JSON.stringify(body) };
 }
 
 test("normalizeRows deduplicates, drops inactive rows, and fills defaults", () => {
@@ -40,23 +34,22 @@ test("normalizeRows deduplicates, drops inactive rows, and fills defaults", () =
 });
 
 test("fetchCatalog authenticates with the access token and returns rows", async (t) => {
-  let authorization: string | null = null;
-  let url = "";
-  withFetch(t, (async (input: string | URL | Request, init?: RequestInit) => {
-    url = String(input);
-    authorization = new Headers(init?.headers).get("authorization");
+  withoutTransport(t);
+  let captured: HttpRequestOptions | undefined;
+  setRequestImpl(async (options) => {
+    captured = options;
     return jsonResponse({
       success: true,
       models: [
         { model: "deepseek-v4.1-flash", title: "DeepSeek-V4.1-Flash", status: 1, contextLength: 1_048_576 },
       ],
     });
-  }) as typeof fetch);
+  });
 
   const catalog = await fetchCatalog("the-token");
 
-  assert.equal(url, CATALOG_URL);
-  assert.equal(authorization, "Bearer the-token");
+  assert.equal(captured?.url, CATALOG_URL);
+  assert.equal(captured?.headers["authorization"], "Bearer the-token");
   assert.deepEqual(catalog, [
     {
       id: "deepseek-v4.1-flash",
@@ -68,7 +61,8 @@ test("fetchCatalog authenticates with the access token and returns rows", async 
 });
 
 test("fetchCatalog reads the personal/builtin shape", async (t) => {
-  withFetch(t, (async () =>
+  withoutTransport(t);
+  setRequestImpl(async () =>
     jsonResponse({
       data: {
         personalModels: [{ model: "personal", title: "Personal", contextLength: 4096 }],
@@ -77,7 +71,7 @@ test("fetchCatalog reads the personal/builtin shape", async (t) => {
           { model: "shared", title: "Shared", completionOptions: { maxTokens: 2048 } },
         ],
       },
-    })) as typeof fetch);
+    }));
 
   const catalog = await fetchCatalog("token");
   assert.deepEqual(
@@ -88,18 +82,27 @@ test("fetchCatalog reads the personal/builtin shape", async (t) => {
 });
 
 test("fetchCatalog returns undefined instead of an empty roster", async (t) => {
-  withFetch(t, (async () => jsonResponse({ success: true, models: [{ model: "x", status: 0 }] })) as typeof fetch);
+  withoutTransport(t);
+  setRequestImpl(async () => jsonResponse({ success: true, models: [{ model: "x", status: 0 }] }));
   assert.equal(await fetchCatalog("token"), undefined);
 });
 
 test("fetchCatalog treats an HTTP failure as no catalog", async (t) => {
-  withFetch(t, (async () => new Response("nope", { status: 401 })) as typeof fetch);
+  withoutTransport(t);
+  setRequestImpl(async () => ({ status: 401, text: "nope" }));
   assert.equal(await fetchCatalog("token"), undefined);
 });
 
-test("fetchCatalog treats a network failure as no catalog", async (t) => {
-  withFetch(t, (async () => {
+test("fetchCatalog treats a transport failure as no catalog", async (t) => {
+  withoutTransport(t);
+  setRequestImpl(async () => {
     throw new Error("offline");
-  }) as typeof fetch);
+  });
+  assert.equal(await fetchCatalog("token"), undefined);
+});
+
+test("fetchCatalog treats malformed JSON as no catalog", async (t) => {
+  withoutTransport(t);
+  setRequestImpl(async () => ({ status: 200, text: "<html>" }));
   assert.equal(await fetchCatalog("token"), undefined);
 });
