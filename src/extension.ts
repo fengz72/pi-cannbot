@@ -12,9 +12,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getApiKey, login, refreshToken } from "./auth.ts";
 import { fetchCatalog } from "./catalog.ts";
 import { GATEWAY_BASE_URL, PROVIDER_ID, PROVIDER_NAME } from "./constants.ts";
+import { installFetchTrust } from "./http.ts";
 import { fallbackModels, toModels } from "./models.ts";
 
-export default function piCannbot(pi: ExtensionAPI): void {
+export default async function piCannbot(pi: ExtensionAPI): Promise<void> {
+  // Pi issues the actual model requests itself; give its fetch the same CA set.
+  await installFetchTrust();
+
   pi.registerProvider(PROVIDER_ID, {
     name: PROVIDER_NAME,
     baseUrl: GATEWAY_BASE_URL,

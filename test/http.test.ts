@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { rootCertificates } from "node:tls";
 
-import { requestText, setRequestImpl, trustBundle } from "../src/http.ts";
+import { requestHost, requestText, setRequestImpl, trustBundle } from "../src/http.ts";
 
 test("trustBundle includes Node's roots", () => {
   const bundle = trustBundle();
@@ -42,4 +42,26 @@ test("requestText routes through the installed transport", async (t) => {
   });
 
   assert.deepEqual(response, { status: 200, text: "GET" });
+});
+
+test("requestHost understands strings, URLs, and Request-like objects", () => {
+  assert.equal(requestHost("https://cannbot.hicann.cn/x"), "cannbot.hicann.cn");
+  assert.equal(requestHost(new URL("https://example.com/y")), "example.com");
+  assert.equal(requestHost({ url: "https://cannbot.hicann.cn/z" }), "cannbot.hicann.cn");
+  assert.equal(requestHost("not a url"), undefined);
+  assert.equal(requestHost(undefined), undefined);
+});
+
+test("installFetchTrust does nothing when disabled", async () => {
+  const previous = process.env.PI_CANNBOT_NO_FETCH_TRUST;
+  process.env.PI_CANNBOT_NO_FETCH_TRUST = "1";
+  try {
+    const before = globalThis.fetch;
+    const { installFetchTrust } = await import("../src/http.ts");
+    await installFetchTrust();
+    assert.equal(globalThis.fetch, before);
+  } finally {
+    if (previous === undefined) delete process.env.PI_CANNBOT_NO_FETCH_TRUST;
+    else process.env.PI_CANNBOT_NO_FETCH_TRUST = previous;
+  }
 });

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2]
+
+- Also cover model inference. The AI SDK attaches its own undici dispatcher to
+  every request and ignores the global one, so the extension now wraps `fetch`
+  and swaps in a CA-aware Agent **only for `cannbot.hicann.cn`**. It reuses the
+  undici copy Pi loaded, and every other request keeps its own dispatcher.
+  `/login`, model discovery, and chat all work without `NODE_EXTRA_CA_CERTS`.
+
 ## [0.1.1]
 
 - Send the auth and catalog requests over `node:https` with Node's bundled CA

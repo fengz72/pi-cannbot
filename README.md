@@ -73,9 +73,10 @@ git push --follow-tags
 （`DigiCert Global Root G2` 由 `DigiCert Global Root CA` 签发），Node 的全局
 `fetch` 默认拒收。
 
-插件已内置修复：认证与目录请求走 `node:https`，并显式传入 Node 自带的
-`tls.rootCertificates`（不新增信任、不关闭校验），同时合并 `NODE_EXTRA_CA_CERTS`
-与 `SSL_CERT_FILE` 中的证书。正常情况下**无需任何环境变量**。
+插件已内置修复：认证与目录请求走 `node:https` 并显式传入 Node 自带的
+`tls.rootCertificates`；模型推理请求由 AI SDK 发出，插件只在目标为
+`cannbot.hicann.cn` 时把它的 undici dispatcher 换成带同样 CA 的 Agent。
+两者都不新增信任、不关闭校验，正常情况下**无需任何环境变量**。
 
 Pi 自身的下载（如启动时安装 `fd` / `ripgrep`）仍使用 Pi 内置的 fetch，可能仍报同样
 错误。需要的话在启动 Pi 的 shell 里设置：

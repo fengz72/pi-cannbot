@@ -5,17 +5,19 @@ import register from "../src/extension.ts";
 import { FALLBACK_MODELS } from "../src/constants.ts";
 import { setRequestImpl } from "../src/http.ts";
 
+process.env.PI_CANNBOT_NO_FETCH_TRUST = "1";
+
 interface Registered {
   id: string;
   config: any;
 }
 
-function registered(): Registered {
+async function registered(): Promise<Registered> {
   const calls: Registered[] = [];
   const pi = {
     registerProvider: (id: string, config: unknown) => calls.push({ id, config }),
   };
-  register(pi as never);
+  await register(pi as never);
   const call = calls[0];
   assert.ok(call !== undefined);
   return call;
@@ -25,8 +27,8 @@ function withoutTransport(t: TestContext): void {
   t.after(() => setRequestImpl(undefined));
 }
 
-test("registers the cannbot provider with OAuth and a fallback roster", () => {
-  const { id, config } = registered();
+test("registers the cannbot provider with OAuth and a fallback roster", async () => {
+  const { id, config } = await registered();
   assert.equal(id, "cannbot");
   assert.equal(config.name, "CANNBOT");
   assert.equal(config.baseUrl, "https://cannbot.hicann.cn/gateway/compatible-mode/v1");
@@ -38,8 +40,8 @@ test("registers the cannbot provider with OAuth and a fallback roster", () => {
   }
 });
 
-test("modifyModels injects x-api-vkey from the stored credential", () => {
-  const { config } = registered();
+test("modifyModels injects x-api-vkey from the stored credential", async () => {
+  const { config } = await registered();
   const models = config.oauth.modifyModels(
     [{ id: "m", headers: { existing: "1" }, marker: true }],
     { refresh: "vk-1", access: "access", expires: 0 },
@@ -57,7 +59,7 @@ test("refreshModels adopts the live catalog for an OAuth credential", async (t) 
     text: JSON.stringify({ models: [{ model: "live-model", title: "Live Model", status: 1, contextLength: 8192 }] }),
   }));
 
-  const { config } = registered();
+  const { config } = await registered();
   const models = await config.refreshModels({
     credential: { type: "oauth", access: "token", refresh: "vk", expires: 0 },
     signal: new AbortController().signal,
@@ -69,7 +71,7 @@ test("refreshModels adopts the live catalog for an OAuth credential", async (t) 
 });
 
 test("refreshModels keeps the fallback roster without a credential", async () => {
-  const { config } = registered();
+  const { config } = await registered();
   const models = await config.refreshModels({
     signal: new AbortController().signal,
   });
@@ -79,7 +81,7 @@ test("refreshModels keeps the fallback roster without a credential", async () =>
 test("refreshModels keeps the fallback roster when the catalog fails", async (t) => {
   withoutTransport(t);
   setRequestImpl(async () => ({ status: 500, text: "nope" }));
-  const { config } = registered();
+  const { config } = await registered();
   const models = await config.refreshModels({
     credential: { type: "oauth", access: "token", refresh: "vk", expires: 0 },
     signal: new AbortController().signal,

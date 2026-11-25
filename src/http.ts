@@ -11,6 +11,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { request } from "node:https";
 import { rootCertificates } from "node:tls";
 
@@ -101,4 +102,91 @@ export function setRequestImpl(impl: RequestImpl | undefined): void {
 
 export function requestText(options: HttpRequestOptions): Promise<HttpResponse> {
   return active(options);
+}
+
+
+let trustInstalled = false;
+
+let ownRequire: NodeJS.Require | undefined;
+function requireFromExtension(): NodeJS.Require {
+  if (ownRequire === undefined) {
+    ownRequire = createRequire(import.meta.url);
+  }
+  return ownRequire;
+}
+
+type UndiciModule = typeof import("undici");
+
+/**
+ * Prefer the undici copy Pi itself loaded, so the Agent we build and the fetch
+ * that runs are the same implementation. `createRequire(process.argv[1])`
+ * resolves from Pi's CLI entry, which lives inside Pi's install tree.
+ */
+function loadUndici(): UndiciModule | undefined {
+  const entry = process.argv[1];
+  if (entry !== undefined) {
+    try {
+      const requireFromPi = createRequire(entry);
+      return requireFromPi(requireFromPi.resolve("undici")) as UndiciModule;
+    } catch {
+      // Fall through to our own dependency.
+    }
+  }
+  try {
+    return requireFromExtension()("undici") as UndiciModule;
+  } catch {
+    return undefined;
+  }
+}
+
+const CANNBOT_HOST = "cannbot.hicann.cn";
+
+export function requestHost(input: unknown): string | undefined {
+  try {
+    if (typeof input === "string") return new URL(input).hostname;
+    if (input instanceof URL) return input.hostname;
+    if (typeof input === "object" && input !== null && "url" in input) {
+      return new URL(String((input as { url: unknown }).url)).hostname;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Make Pi's own requests to CANNBOT accept the gateway's chain.
+ *
+ * Auth and catalog already use {@link requestText}. Model inference is issued
+ * by the AI SDK, which attaches its own undici dispatcher to every request and
+ * ignores the global one. So instead of replacing the global dispatcher, wrap
+ * `fetch` and swap the dispatcher **only for the CANNBOT host**, leaving every
+ * other request (and any proxy dispatcher) untouched.
+ */
+export async function installFetchTrust(): Promise<void> {
+  if (trustInstalled) return;
+  trustInstalled = true;
+  if (process.env.PI_CANNBOT_NO_FETCH_TRUST === "1") return;
+  if (process.env.NODE_EXTRA_CA_CERTS !== undefined || process.env.SSL_CERT_FILE !== undefined) return;
+
+  const undici = loadUndici();
+  if (undici === undefined) return;
+
+  try {
+    const agent = new undici.Agent({
+      connect: { ca: trustBundle() },
+      // Match the SDK's "no timeout" dispatcher for long generations.
+      headersTimeout: 0,
+      bodyTimeout: 0,
+    });
+    undici.setGlobalDispatcher(agent);
+
+    const original = globalThis.fetch;
+    globalThis.fetch = ((input: unknown, init?: RequestInit) => {
+      if (requestHost(input) !== CANNBOT_HOST) return original(input as never, init);
+      return original(input as never, { ...(init ?? {}), dispatcher: agent } as RequestInit);
+    }) as typeof fetch;
+  } catch {
+    // requestText still covers login and model discovery.
+  }
 }
